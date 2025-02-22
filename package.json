@@ -1,0 +1,22 @@
+{
+  "name": "speckle-webapp-v2",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "dev": "concurrently \"npx vite\" \"ngrok http --url=grown-concrete-antelope.ngrok-free.app 3000\"",
+    "build": "npx vite build",
+    "preview": "concurrently \"npx vite preview\" \"ngrok http --url=grown-concrete-antelope.ngrok-free.app 4173\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@speckle/viewer": "^2.23.6"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0"
+  }
+}
