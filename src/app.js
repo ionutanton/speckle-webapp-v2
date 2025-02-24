@@ -1,4 +1,8 @@
-import { overlayObj, getSpeckleCameraPosition, getObjectsByLayer } from "./speckle-app";
+import {
+  overlayObj,
+  getSpeckleCameraPosition,
+  getObjectsByLayer,
+} from "./speckle-app";
 import { MeshBasicMaterial } from "three";
 import { OBJExporter } from "three/addons/exporters/OBJExporter.js";
 
@@ -18,7 +22,6 @@ document.addEventListener("DOMContentLoaded", () => {
   let qrSize = 77.78;
   let rectWidth = 418.15;
   let rectHeight = 297.68;
-  let extrudeRedHeight = 25;
 
   // Object to store color and height values
   const colour = {
@@ -34,7 +37,7 @@ document.addEventListener("DOMContentLoaded", () => {
     },
     Green: {
       name: "green",
-      rgb: "rgb(0, 255, 0)",
+      rgb: "rgb(30, 255, 0)",
       height: 6,
     },
   };
@@ -337,8 +340,8 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // Build OBJ from extruded boundaries
-  function buildOBJ(boundaries, extrudeHeight) {
-    const material = new MeshBasicMaterial({ color: "red" });
+  function buildOBJ(boundaries, colourName) {
+    const material = new MeshBasicMaterial({ color: colour[colourName].name });
     const group = new THREE.Group();
 
     for (let boundary of boundaries) {
@@ -352,7 +355,7 @@ document.addEventListener("DOMContentLoaded", () => {
       // Extrude the vertices to create the shape
       const extrudeSettings = {
         steps: 1,
-        depth: extrudeHeight,
+        depth: colour[colourName].height,
         bevelEnabled: false,
       };
 
@@ -372,7 +375,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const exporter = new OBJExporter();
     const objData = exporter.parse(group);
 
-    return { objData, group };
+    return { objData };
   }
 
   // Overlay OBJ on Speckle viewer
@@ -392,7 +395,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-    let rgbArray =  colour[colourname].rgb.match(/\d+/g).map(Number);
+    let rgbArray = colour[colourname].rgb.match(/\d+/g).map(Number);
     let redPixels = filterPixels(imageData, rgbArray);
 
     // Create a new ImageData object with red pixels
@@ -434,14 +437,14 @@ document.addEventListener("DOMContentLoaded", () => {
       console.log("Transformed boundaries: ", transformedBoundaries);
 
       // Build OBJ
-      let { objData, groupData } = buildOBJ(
-        transformedBoundaries,
-        colour[colourname].height
-      );
+      let { objData } = buildOBJ(transformedBoundaries, colourname);
 
       // Overlay OBJ on Speckle viewer
-      overlayOBJOnSpeckle(objData, "atelier-34-" + colour[colourname].name, colour[colourname].rgb);
-
+      overlayOBJOnSpeckle(
+        objData,
+        "atelier-34-" + colour[colourname].name,
+        colour[colourname].rgb
+      );
     }
   }
 
@@ -449,6 +452,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function detectAndProcessAllBoundaries() {
     detectAndProcessBoundaries("Red"); // RGB values for red
     detectAndProcessBoundaries("Blue"); // RGB values for blue
+    detectAndProcessBoundaries("Green"); // RGB values for blue
   }
 
   function toggleSettings() {
@@ -460,15 +464,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const colorInput = document.getElementById(`color${colorKey}`);
     const heightInput = document.getElementById(`height${colorKey}`);
     const heightLabel = document.getElementById(`label${colorKey}`);
-
+    
     // Update color object
-    colour[colorKey].rgb = colorInput.value;
+    const rgbcolour = hexToRgb(colorInput.value);
+    colour[colorKey].rgb = rgbcolour;
     colour[colorKey].height = heightInput.value;
 
     // Update height label
     heightLabel.textContent = `Height: ${heightInput.value}`;
 
-    // console.log(colour[colorKey]); // Debugging output to see the updated values
+    console.log(colour[colorKey]); // Debugging output to see the updated values
   }
 
   // Overlay OBJ on Speckle viewer
@@ -482,10 +487,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Initialize UI with stored values
   function initializeUI() {
-    document.getElementById("settings-btn").addEventListener("click", toggleSettings);
-    document.getElementById("capture").addEventListener("click", detectAndProcessAllBoundaries);
+    document
+      .getElementById("settings-btn")
+      .addEventListener("click", toggleSettings);
+    document
+      .getElementById("capture")
+      .addEventListener("click", detectAndProcessAllBoundaries);
 
-    document.getElementById("get-camera-btn").addEventListener("click", getSpeckleCamera);
+    document
+      .getElementById("get-camera-btn")
+      .addEventListener("click", getSpeckleCamera);
 
     for (const key in colour) {
       document.getElementById(`color${key}`).value = rgbToHex(colour[key].rgb);
@@ -501,6 +512,21 @@ document.addEventListener("DOMContentLoaded", () => {
         .getElementById(`height${key}`)
         .addEventListener("input", () => updateSettings(key));
     }
+  }
+
+  // Convert Hex to RGB format (e.g., "#ff0000" to "rgb(255, 0, 0)")
+  function hexToRgb(hex) {
+    // Remove the hash if it exists
+    hex = hex.replace(/^#/, "");
+
+    // Parse the hex values
+    const bigint = parseInt(hex, 16);
+    const r = (bigint >> 16) & 255;
+    const g = (bigint >> 8) & 255;
+    const b = bigint & 255;
+
+    // Return the RGB string
+    return `rgb(${r}, ${g}, ${b})`;
   }
 
   // Convert RGB format (e.g., "rgb(255, 0, 0)") to HEX (e.g., "#ff0000")
