@@ -1,3 +1,5 @@
 /.vscode
 /node_modules
 /src_backup
+docker.bat
+dockerfile

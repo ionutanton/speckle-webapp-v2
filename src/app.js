@@ -464,7 +464,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const colorInput = document.getElementById(`color${colorKey}`);
     const heightInput = document.getElementById(`height${colorKey}`);
     const heightLabel = document.getElementById(`label${colorKey}`);
-    
+
     // Update color object
     const rgbcolour = hexToRgb(colorInput.value);
     colour[colorKey].rgb = rgbcolour;
