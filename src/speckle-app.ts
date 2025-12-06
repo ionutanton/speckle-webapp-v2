@@ -16,14 +16,14 @@ let viewer: Viewer | null = null;
 let lastLoaded: ObjLoader | null = null;
 
 let startingCameraPosition = new THREE.Vector3(
-  -16.676493361196577,
-  -343.7110624801237,
-  292.3592774902453
+  134.48088760188392,
+  -254.40139918849698,
+  134.81577284127053
 );
 let startingCameraTarget = new THREE.Vector3(
-  172.04899530204807,
-  -88.1011706939485,
-  16.622762381740706
+  178.92204300024903,
+  -127.47506558174267,
+  -12.558477598551374
 );
 
 async function main() {
@@ -46,7 +46,7 @@ async function main() {
 
     /** Create a loader for the speckle stream */
     const urls = await UrlHelper.getResourceUrls(
-      "https://app.speckle.systems/projects/fc0a02354d/models/136b5b7fe2"
+      "https://app.speckle.systems/projects/6293f7974f/models/3e77e04b05"
     );
     for (const url of urls) {
       const loader = new SpeckleLoader(viewer.getWorldTree(), url, "");

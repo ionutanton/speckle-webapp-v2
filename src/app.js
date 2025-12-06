@@ -19,26 +19,26 @@ document.addEventListener("DOMContentLoaded", () => {
   let detectionInterval = 100; // Detection interval in milliseconds
   let lastDetectionTime = 0;
   let qrCodeCorners = [];
-  let qrSize = 77.78;
-  let rectWidth = 418.15;
-  let rectHeight = 297.68;
+  let qrSize = 100;
+  let rectWidth = 280;
+  let rectHeight = 200;
 
   // Object to store color and height values
   const colour = {
     Red: {
       name: "red",
-      rgb: "rgb(255, 0, 0)",
-      height: 15,
+      rgb: "rgb(190, 60, 40)",
+      height: 16,
     },
     Blue: {
       name: "blue",
-      rgb: "rgb(0, 90, 255)",
-      height: 33,
+      rgb: "rgb(50, 150, 180)",
+      height: 28,
     },
     Green: {
       name: "green",
-      rgb: "rgb(30, 255, 0)",
-      height: 6,
+      rgb: "rgb(100, 180, 70)",
+      height: 4,
     },
   };
 
@@ -279,7 +279,7 @@ document.addEventListener("DOMContentLoaded", () => {
     cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY, 0);
 
     // Detect edges
-    cv.Canny(gray, edges, 50, 150, 3);
+    cv.Canny(gray, edges, 100, 200, 3);
 
     // Find contours
     cv.findContours(
