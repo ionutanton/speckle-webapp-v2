@@ -6,15 +6,14 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
-    <title>Speckle Interactive Urbanism</title>
-    <script src="https://unpkg.com/jsqr"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.5.1/math.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/numeric/1.2.6/numeric.min.js"></script>
+    <title>Speckle Interactive Urbanism - WebXR</title>
+
+    <!-- OpenCV is still required for blob detection -->
     <script 
       src="https://docs.opencv.org/4.10.0/opencv.js"
       type="text/javascript"
     ></script>
-    <!-- Removed CDN three.js to avoid multiple instances; using local `three` package. -->
+
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <script type="module" src="./src/app.ts"></script>
 
@@ -22,118 +21,96 @@
       body {
         margin: 0;
         overflow: hidden;
-        background-color: black;
+        background-color: #222;
         font-family: sans-serif;
-        font-size: small;
+        color: white;
       }
-      /* Video element: small visible preview for debugging and permissions
-         (the main processing uses the canvas). */
-      video {
-        position: fixed;
-        right: 12px;
-        bottom: 12px;
-        width: 160px;
-        height: auto;
-        z-index: 20;
-        border: 2px solid rgba(255,255,255,0.2);
-        border-radius: 8px;
-        background: #000;
-        transform: translateZ(0);
-        -webkit-transform: translateZ(0);
-        display: none;
-      }
-      /* Background Canvas: renders video feed */
-      #qrCanvas {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        z-index: 1;
-        object-fit: cover;
-      }
-      /* Speckle Viewer: overlays 3D content */
-      #speckle-container {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        z-index: 2;
-        pointer-events: none; /* Allow interaction if needed, but for now transparent */
-      }
-      #speckle-model {
-        width: 100%;
-        height: 100%;
-        background: transparent;
-      }
-      /* UI Overlay */
+
+      /* UI Overlay for WebXR - Positioned absolutely */
       #ui-overlay {
         position: fixed;
-        top: 10px;
-        left: 10px;
-        z-index: 10;
-        background: rgba(0, 0, 0, 0.5);
-        padding: 10px;
-        border-radius: 8px;
+        top: 20px;
+        left: 20px;
+        z-index: 100;
+        background: rgba(0, 0, 0, 0.6);
+        padding: 15px;
+        border-radius: 12px;
+        backdrop-filter: blur(5px);
+        max-width: 280px;
+        max-height: 80vh;
+        overflow-y: auto;
+      }
+
+      button {
+        background: #3a86ff;
         color: white;
-        max-width: 250px;
-      }
-      select, button {
-        margin-top: 5px;
+        border: none;
+        padding: 8px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: bold;
         width: 100%;
-        padding: 5px;
+        margin-top: 5px;
       }
+      button:hover {
+        background: #2667cc;
+      }
+
       .settings-panel {
-        margin-top: 10px;
-        display: none;
-        border-top: 1px solid #555;
-        padding-top: 5px;
+        margin-top: 15px;
+        display: none; /* Toggled by JS */
+        border-top: 1px solid rgba(255,255,255,0.2);
+        padding-top: 10px;
       }
+
       .color-block {
          margin-top: 10px;
-         background: rgba(255,255,255,0.1);
-         padding: 5px;
-         border-radius: 4px;
+         background: rgba(255,255,255,0.05);
+         padding: 8px;
+         border-radius: 6px;
       }
+
       input[type=range] {
         width: 100%;
         display: block;
+        margin: 5px 0;
       }
+
       input[type=color] {
         width: 100%;
         height: 30px;
         border: none;
+        border-radius: 4px;
         padding: 0;
+        cursor: pointer;
       }
+
       label {
         display: flex;
         justify-content: space-between;
-        margin-bottom: 2px;
+        font-size: 0.9em;
+        margin-bottom: 5px;
+      }
+
+      h4 { margin: 0 0 10px 0; }
+
+      #qr-status {
+        margin-top: 10px;
+        font-style: italic;
+        color: #ddd;
       }
     </style>
   </head>
   <body>
-    <!-- 1. Video Input (Hidden) -->
-    <video id="webcam" autoplay playsinline></video>
+    <!-- The AR scene is handled by WebXR/Three.js creating a context on the canvas or implicitly -->
 
-    <!-- 2. Background Canvas (Video Feed + Debug) -->
-    <canvas id="qrCanvas"></canvas>
-
-    <!-- 3. Speckle Viewer (3D Overlay) -->
-    <div id="speckle-container">
-      <div id="speckle-model"></div>
-    </div>
-
-    <!-- 4. UI Controls -->
+    <!-- UI Controls -->
     <div id="ui-overlay">
-      <select id="cameraSelect"></select>
-      <button id="capture">Capture & Overlay</button>
+      <div id="qr-status">Initializing...</div>
       <button id="settings-btn">⚙ Settings</button>
-      <div id="qr-status">Detecting...</div>
 
       <div class="settings-panel" id="settingsPanel">
-        <h4>Settings</h4>
+        <h4>Simulation Settings</h4>
         <div class="color-block">
             <label>Red Height <span id="labelRed">15</span></label>
             <input type="range" id="heightRed" min="3" max="60" value="15">
@@ -149,8 +126,9 @@
             <input type="range" id="heightGreen" min="3" max="60" value="6">
              <input type="color" id="colorGreen" value="#1eff00">
         </div>
-         <button id="get-camera-btn">Log Camera</button>
       </div>
     </div>
+
+    <!-- Start Button is dynamically added by app.ts -->
   </body>
 </html>
