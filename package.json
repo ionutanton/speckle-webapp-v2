@@ -12,6 +12,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@speckle/objectloader": "^2.26.8",
     "@speckle/viewer": "^2.23.6",
     "three": "^0.140.0",
     "three-stdlib": "^2.36.1"

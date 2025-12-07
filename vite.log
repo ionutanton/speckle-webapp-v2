@@ -1,0 +1,6 @@
+
+> speckle-webapp-v2@1.0.0 dev
+> concurrently "npx vite" "ngrok http --url=grown-concrete-antelope.ngrok-free.app 3000"
+
+[1] /bin/sh: 1: ngrok: not found
+[1] ngrok http --url=grown-concrete-antelope.ngrok-free.app 3000 exited with code 127
