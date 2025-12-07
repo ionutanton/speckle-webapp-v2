@@ -8,6 +8,8 @@ import {
   ObjectLayers,
   SpeckleBasicMaterial,
   InlineView,
+  NodeRenderView,
+  TreeNode,
 } from "@speckle/viewer";
 import { CameraController, SelectionExtension } from "@speckle/viewer";
 import * as THREE from "three";
@@ -101,6 +103,7 @@ async function overlayObj(objData: string, id: string, colour: number) {
     roughness: 1,
     metalness: 0,
     vertexColors: false,
+    lineWeight: 1, // Added required property for DisplayStyle
   };
 
    /** Get all render views manually */
@@ -109,9 +112,11 @@ async function overlayObj(objData: string, id: string, colour: number) {
     const renderViews: Array<NodeRenderView> = [];
     for (let node of nodes) {
       node.all((_node: TreeNode) => {
-        renderViews.push(
-          ...viewer.getWorldTree().getRenderTree().getRenderViewsForNode(_node)
-        );
+        if (viewer) {
+          renderViews.push(
+            ...viewer.getWorldTree().getRenderTree().getRenderViewsForNode(_node)
+          );
+        }
         return true;
       });
     }
@@ -138,7 +143,7 @@ async function getSpeckleCameraPosition() {
 
 async function getObjectsByLayer(viewer: Viewer, layerName: string) {
   const worldTree = viewer.getWorldTree(); // Get hierarchical object tree
-  const allObjects = worldTree.findAll(); // Flatten hierarchy to an array
+  const allObjects = worldTree.findAll(() => true); // Flatten hierarchy to an array
 
   // Filter objects that belong to the specified layer
   const objectsInLayer = allObjects.filter(obj => obj.raw.layer === layerName);
