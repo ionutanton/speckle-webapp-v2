@@ -3,9 +3,10 @@ import {
   getSpeckleCameraPosition,
   updateCamera,
 } from "./speckle-app";
-import { MeshBasicMaterial, Group, Vector3, Shape, ExtrudeGeometry, Mesh, Matrix4 } from "three";
 // @ts-ignore
-import { OBJExporter } from "three/addons/exporters/OBJExporter.js";
+import { MeshBasicMaterial, Group, Vector3, Shape, ExtrudeGeometry, Mesh, Matrix4 } from "three";
+// Use the examples path for exporters (compatible with installed `three` package)
+import { OBJExporter } from "three-stdlib";
 
 // Global Declarations for CDN Libraries
 declare var cv: any;
@@ -15,27 +16,29 @@ declare var math: any;
 document.addEventListener("DOMContentLoaded", () => {
   let video = document.getElementById("webcam") as HTMLVideoElement;
   let canvas = document.getElementById("qrCanvas") as HTMLCanvasElement;
-  let ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
+  let ctx = canvas.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D;
+  // Helpful debug logs
+  console.log("Secure context:", window.isSecureContext);
+  console.log("MediaDevices available:", !!navigator.mediaDevices && !!navigator.mediaDevices.getUserMedia);
   let statusText = document.getElementById("qr-status") as HTMLElement;
   let cameraSelect = document.getElementById("cameraSelect") as HTMLSelectElement;
 
   let currentStream: MediaStream | null = null;
   let currentCameraId: string | null = null;
   let lastDetectedQR: any = null; // Can be string or corners object, but tracking is loose here
-  let detectionInterval = 50; // Faster detection for AR
-  let lastDetectionTime = 0;
   let qrCodeCorners: any[] = [];
-
-  // Physical Dimensions in real world units (e.g. mm)
-  let qrSize = 77.78;
-  let rectWidth = 418.15;
-  let rectHeight = 297.68;
+  let isDetecting = false; // To ensure detectQR loop starts only once
+  let frameCount = 0;
+  const processFrameInterval = 25; // Process every N frames
 
   interface ColorSetting {
       name: string;
       rgb: string;
       height: number;
   }
+
+  //qr code size in 3d model units
+  const qrSize = 100;
 
   // Object to store color and height values
   const colour: Record<string, ColorSetting> = {
@@ -76,9 +79,10 @@ document.addEventListener("DOMContentLoaded", () => {
       option.text = device.label || `Camera ${index + 1}`;
       cameraSelect.appendChild(option);
     });
-    // if only one device, just start the stream
-    if (videoDevices.length === 1) {
+    if (videoDevices.length > 0) {
       startWebcam(videoDevices[0].deviceId);
+    } else {
+      statusText.innerText = "No camera found.";
     }
     // Add event listener for camera selection change
     cameraSelect.addEventListener("change", switchCamera);
@@ -99,11 +103,23 @@ document.addEventListener("DOMContentLoaded", () => {
     };
     try {
       let stream = await navigator.mediaDevices.getUserMedia(constraints);
+      // Mute preview so autoplay is allowed by browsers
+      video.muted = true;
       video.srcObject = stream;
+      // Try to explicitly play (some browsers require this)
+      try {
+        await video.play();
+      } catch (playErr) {
+        console.warn('video.play() failed (may require user gesture):', playErr);
+      }
       currentStream = stream;
       currentCameraId = deviceId;
-      // Add event listener to start detectQR after video is loaded
-      video.addEventListener("loadeddata", detectQR);
+      
+      // Start the detection loop if it's not already running
+      if (!isDetecting) {
+        isDetecting = true;
+        detectQR();
+      }
     } catch (error) {
       console.error("Error accessing camera:", error);
       statusText.innerText = "Error accessing camera.";
@@ -120,17 +136,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Detect QR Codes
   function detectQR() {
-    const now = Date.now();
-
+    frameCount++;
     // Always update canvas with video
     if (video.readyState === video.HAVE_ENOUGH_DATA) {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        if (now - lastDetectionTime >= detectionInterval) {
-             lastDetectionTime = now;
-
+        if (frameCount % processFrameInterval === 0) {
              let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
              let qrCode = jsQR(imageData.data, imageData.width, imageData.height);
 
@@ -175,59 +188,87 @@ document.addEventListener("DOMContentLoaded", () => {
     ctx.stroke();
   }
 
+function manual_norm(vec: any) {
+    const data = vec.toArray().flat();
+    return Math.sqrt(data.reduce((acc: number, val: number) => acc + val*val, 0));
+}
   function estimatePose(imagePoints: any[], width: number, height: number) {
-      if (typeof cv === "undefined") return;
+      if (!math) {
+          console.error("math.js not available");
+          return;
+      }
 
-      const objectPoints = [
-          0, 0, 0,
-          qrSize, 0, 0,
-          qrSize, 0, qrSize,
-          0, 0, qrSize
+      // 1. Define 2D points of the model rectangle on the plane Z=0
+      const modelPoints = [
+          [0, 0],       // top-left
+          [qrSize, 0],     // top-right
+          [qrSize, -qrSize],  // bottom-right
+          [0, -qrSize]     // bottom-left
       ];
 
-      const objPointsMat = cv.matFromArray(4, 3, cv.CV_64FC1, objectPoints);
+      // 2. Get image points (from QR detection)
+      const srcPoints = imagePoints.map(p => [p.x, p.y]);
 
-      // Image points from jsQR
-      const imgPoints = [
-          imagePoints[0].x, imagePoints[0].y,
-          imagePoints[1].x, imagePoints[1].y,
-          imagePoints[2].x, imagePoints[2].y,
-          imagePoints[3].x, imagePoints[3].y
-      ];
-      const imgPointsMat = cv.matFromArray(4, 2, cv.CV_64FC1, imgPoints);
+      // 3. Compute Homography from model plane to image plane (p_img = H * p_model)
+      const H_model_to_img = computeHomographyMatrix(modelPoints, srcPoints);
 
-      // Camera Matrix (Intrinsic)
+      // 4. Get camera intrinsic matrix K
       const fx = width;
-      const fy = width;
+      const fy = width; // Assuming square pixels
       const cx = width / 2;
       const cy = height / 2;
+      const K = math.matrix([
+          [fx, 0, cx],
+          [0, fy, cy],
+          [0, 0, 1]
+      ]);
 
-      const cameraMatrixData = [
-          fx, 0, cx,
-          0, fy, cy,
-          0, 0, 1
-      ];
-      const cameraMatrix = cv.matFromArray(3, 3, cv.CV_64FC1, cameraMatrixData);
+      // 5. Decompose H to get R and t
+      try {
+          const K_inv = math.inv(K);
+          const M = math.multiply(K_inv, H_model_to_img);
 
-      const distCoeffs = cv.Mat.zeros(5, 1, cv.CV_64FC1);
+          const m1 = M.subset(math.index([0,1,2], 0));
+          const m2 = M.subset(math.index([0,1,2], 1));
+          const m3 = M.subset(math.index([0,1,2], 2));
 
-      const rvec = new cv.Mat();
-      const tvec = new cv.Mat();
+          const lambda = manual_norm(m1);
+          if (lambda < 1e-9) return;
 
-      const success = cv.solvePnP(objPointsMat, imgPointsMat, cameraMatrix, distCoeffs, rvec, tvec);
+          const r1_approx = math.divide(m1, lambda);
+          const r2_approx = math.divide(m2, lambda);
+          const t_vec = math.divide(m3, lambda);
 
-      if (success) {
-          const R = new cv.Mat();
-          cv.Rodrigues(rvec, R);
+          // Orthogonalize r1 and r2 to create a valid rotation matrix
+          const r1_vec = r1_approx;
+          const r2_dot_r1 = math.dot(r2_approx, r1_vec);
+          const r2_proj_r1 = math.multiply(r1_vec, r2_dot_r1);
+          const r2_ortho = math.subtract(r2_approx, r2_proj_r1);
 
+          const r1_norm = manual_norm(r1_vec);
+          const r2_norm = manual_norm(r2_ortho);
+
+          if (r1_norm < 1e-9 || r2_norm < 1e-9) return;
+
+          const r1_final_vec = math.divide(r1_vec, r1_norm);
+          const r2_final_vec = math.divide(r2_ortho, r2_norm);
+          const r3_final_vec = math.cross(r1_final_vec, r2_final_vec);
+
+          const r1 = r1_final_vec.toArray().flat();
+          const r2 = r2_final_vec.toArray().flat();
+          const r3 = r3_final_vec.toArray().flat();
+          const t = t_vec.toArray().flat();
+
+          // This gives us the view matrix (model -> camera space)
           const viewMatrixOpenCV = new Matrix4();
           viewMatrixOpenCV.set(
-              R.doubleAt(0,0), R.doubleAt(0,1), R.doubleAt(0,2), tvec.doubleAt(0),
-              R.doubleAt(1,0), R.doubleAt(1,1), R.doubleAt(1,2), tvec.doubleAt(1),
-              R.doubleAt(2,0), R.doubleAt(2,1), R.doubleAt(2,2), tvec.doubleAt(2),
-              0, 0, 0, 1
+              r1[0], r2[0], r3[0], t[0],
+              r1[1], r2[1], r3[1], t[1],
+              r1[2], r2[2], r3[2], t[2],
+              0,      0,     0,     1
           );
 
+          // Convert from OpenCV to Three.js camera conventions
           const cvToThree = new Matrix4().set(
               1, 0, 0, 0,
               0, -1, 0, 0,
@@ -239,16 +280,9 @@ document.addEventListener("DOMContentLoaded", () => {
           const cameraWorldMatrixThree = viewMatrixThree.invert();
 
           updateCamera(cameraWorldMatrixThree.elements);
-
-          R.delete();
+      } catch (e) {
+          console.error("Error in pose estimation from homography:", e);
       }
-
-      objPointsMat.delete();
-      imgPointsMat.delete();
-      cameraMatrix.delete();
-      distCoeffs.delete();
-      rvec.delete();
-      tvec.delete();
   }
 
   function computeHomographyMatrix(srcPoints: number[][], dstPoints: number[][]) {
@@ -389,6 +423,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const group = new Group();
 
     for (let boundary of boundaries) {
+      // Transform boundary points to XY plane aligned with QR code
+      // Boundaries are already in QR plane coordinates from homography transform
       let points = boundary.map(
         (point: any) => new Vector3(point.x, point.y, 0)
       );
@@ -407,7 +443,8 @@ document.addEventListener("DOMContentLoaded", () => {
       );
 
       const mesh = new Mesh(extrudedShape, material);
-
+      // No rotation needed; geometry extrudes along Z axis (upward from XY plane)
+      // Just position the group so it sits on the QR plane
       group.add(mesh);
     }
 
