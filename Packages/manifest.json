@@ -1,0 +1,24 @@
+{
+  "dependencies": {
+    "com.unity.feature.development": "1.0.1",
+    "com.unity.textmeshpro": "3.0.6",
+    "com.unity.timeline": "1.7.6",
+    "com.unity.ugui": "1.0.0",
+    "com.unity.visualscripting": "1.9.1",
+    "com.unity.xr.arcore": "5.1.3",
+    "com.unity.xr.arfoundation": "5.1.3",
+    "com.unity.xr.arkit": "5.1.3",
+    "com.unity.xr.interaction.toolkit": "2.5.4",
+    "com.unity.xr.openxr": "1.10.0",
+    "systems.speckle.speckle-unity": "2.17.0"
+  },
+  "scopedRegistries": [
+    {
+      "name": "Speckle",
+      "url": "https://package.openupm.com",
+      "scopes": [
+        "systems.speckle"
+      ]
+    }
+  ]
+}
