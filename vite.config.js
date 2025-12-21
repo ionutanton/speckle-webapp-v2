@@ -9,6 +9,9 @@ export default {
         '127.0.0.1',
         'grown-concrete-antelope.ngrok-free.app' // Add your ngrok host here
       ]
+    },
+    resolve: {
+        dedupe: ['three']
     }
   };
   
