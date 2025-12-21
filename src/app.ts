@@ -1,11 +1,12 @@
 // Single-file TypeScript app: AR overlay using QR top-left as origin
 
+import { SpeckleViewer } from "./lib/speckle-viewer";
+
 // This file expects the following globals to be loaded by index.html via <script> tags:
 // - jsQR (global function)
 // - OpenCV.js (global `cv`)
 // - numeric.js (global `numeric`) - optional (for SVD)
 // - three.js and OBJExporter available on window.THREE / window.OBJExporter
-// - Speckle overlay function available as `window.overlayObj` and camera getter as `window.getSpeckleCameraPosition`
 
 type QRCorner = { x: number; y: number };
 type Colour = { name: string; rgb: string; height: number };
@@ -29,6 +30,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const qrSize = 100;
   const rectWidth = 280;
   const rectHeight = 200;
+  let speckleViewer: SpeckleViewer | null = null;
 
   const colour: ColourMap = {
     Red: { name: "red", rgb: "rgb(190, 60, 40)", height: 16 },
@@ -198,10 +200,12 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function overlayOBJOnSpeckle(objData: string, id: string, colourrgb: string) {
-    const overlay = (window as any).overlayObj || ((window as any).overlayObj = undefined);
-    // Speckle overlay expects a string colour in some builds — keep passing the rgb string.
-    if (typeof overlay === "function") overlay(objData, id, colourrgb);
-    else console.warn("overlayObj is not available on window");
+    if (speckleViewer) {
+      const hexColor = parseInt(colourrgb.replace("rgb(", "").replace(")", "").split(',').map(c => parseInt(c).toString(16).padStart(2, '0')).join(""), 16);
+      speckleViewer.overlayObj(objData, id, hexColor);
+    } else {
+      console.warn("SpeckleViewer not initialized");
+    }
   }
 
   // ---------- Camera + QR detection ----------
@@ -215,7 +219,7 @@ document.addEventListener("DOMContentLoaded", () => {
       opt.text = d.label || `Camera ${i + 1}`;
       cameraSelect.appendChild(opt);
     });
-    if (videoDevices.length === 1) startWebcam(videoDevices[0].deviceId);
+    if (videoDevices.length > 0) startWebcam(videoDevices[0].deviceId);
     cameraSelect.addEventListener("change", switchCamera);
   }
 
@@ -293,7 +297,11 @@ document.addEventListener("DOMContentLoaded", () => {
     colour[key].rgb = rgb; colour[key].height = Number(heightInput.value); label.textContent = `Height: ${heightInput.value}`;
   }
 
-  function getSpeckleCamera() { const getter = (window as any).getSpeckleCameraPosition; if (typeof getter === "function") getter(); }
+  function getSpeckleCamera() {
+    if (speckleViewer) {
+      speckleViewer.getSpeckleCameraPosition();
+    }
+  }
 
   function initializeUI() {
     document.getElementById("settings-btn")!.addEventListener("click", toggleSettings);
@@ -315,7 +323,24 @@ document.addEventListener("DOMContentLoaded", () => {
   function rgbToHex(rgb: string) { const vals = rgb.match(/\d+/g)!.map(Number); return `#${vals.map((v) => v.toString(16).padStart(2, "0")).join("")}`; }
 
   // ---------- Init ----------
-  async function initApp() { await getCameras(); initializeUI(); }
+  async function initApp() {
+    console.log("Initialising app...");
+    const container = document.getElementById("speckle-model");
+    if (container) {
+      console.log("Speckle container found. Initialising viewer...");
+      speckleViewer = new SpeckleViewer(container);
+      try {
+        await speckleViewer.init("https://app.speckle.systems/projects/6293f7974f/models/3e77e04b05");
+        console.log("Speckle viewer initialised and model loaded.");
+      } catch (error) {
+        console.error("Error initialising Speckle viewer:", error);
+      }
+    } else {
+      console.error("Container for speckle model not found");
+    }
+    await getCameras();
+    initializeUI();
+  }
   initApp();
 });
   
