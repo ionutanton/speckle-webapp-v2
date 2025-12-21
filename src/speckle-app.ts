@@ -65,13 +65,17 @@ async function setView() {
     console.error("Viewer is not initialized");
     return;
   }
-  const cameraController = viewer.createExtension(CameraController);
-  cameraController.setCameraView(
-    { position: startingCameraPosition, target: startingCameraTarget },
-    false
-  );
-  // viewer.requestRender();
-  console.log("Camera view set");
+  const cameraController = viewer.getExtension(CameraController);
+  if (cameraController) {
+    cameraController.setCameraView(
+      { position: startingCameraPosition, target: startingCameraTarget },
+      false
+    );
+    // viewer.requestRender();
+    console.log("Camera view set");
+  } else {
+    console.error("CameraController not found in setView");
+  }
 }
 
 async function overlayObj(objData: string, id: string, colour: number) {
