@@ -5,12 +5,8 @@ import {
   SpeckleLoader,
   UrlHelper,
   ObjLoader,
-  ObjectLayers,
-  SpeckleBasicMaterial,
-  InlineView,
   NodeRenderView,
   TreeNode,
-  ViewerParams,
 } from "@speckle/viewer";
 import { CameraController, SelectionExtension } from "@speckle/viewer";
 import * as THREE from "three";
@@ -19,17 +15,18 @@ export class SpeckleViewer {
   private viewer: Viewer;
   private lastLoaded: ObjLoader | null = null;
   private startingCameraPosition = new THREE.Vector3(
-    134.48088760188392,
-    -254.40139918849698,
-    134.81577284127053
+    82.98720953572122,
+    -241.51533173213636,
+    177.92683562138285
   );
   private startingCameraTarget = new THREE.Vector3(
-    178.92204300024903,
-    -127.47506558174267,
-    -12.558477598551374
+    175.22015080090435,
+    -122.90151419495477,
+    4.789746204774063
   );
 
-  constructor(container: HTMLElement, params: Partial<ViewerParams> = DefaultViewerParams) {
+  constructor(container: HTMLElement) {
+    const params = DefaultViewerParams;
     params.showStats = false;
     params.verbose = true;
     this.viewer = new Viewer(container, params);
@@ -58,6 +55,7 @@ export class SpeckleViewer {
         false
       );
       console.log("Camera view set");
+      this.viewer.requestRender();
     } else {
       console.error("CameraController not found");
     }
