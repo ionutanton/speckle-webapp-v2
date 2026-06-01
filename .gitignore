@@ -1,5 +1,7 @@
 /.vscode
 /node_modules
-/src_backup
+/src_back
 docker.bat
 dockerfile
+/dist
+client-debug.log

@@ -1,484 +1,680 @@
-// src/app.ts
-
-import { SpeckleViewer } from "./lib/speckle-viewer";
-
+import { initSpeckle } from "./speckle-app";
 import * as THREE from "three";
-import { OBJExporter } from "three/examples/jsm/exporters/OBJExporter.js";
-
-
-declare const jsQR: any;
 declare const cv: any;
-declare const numeric: any;
+declare const XR8: any;
+declare const XRExtras: any;
 
-type QRCorner = { x: number; y: number };
-type Colour = { name: string; rgb: string; height: number };
+type Colour = { name: string; rgb: string; height: number, hex: number };
 type ColourMap = Record<string, Colour>;
 
-document.addEventListener("DOMContentLoaded", () => {
-  const video = document.getElementById("webcam") as HTMLVideoElement;
-  const canvas = document.getElementById("qrCanvas") as HTMLCanvasElement;
-  const ctx = canvas.getContext("2d")!;
-  const statusText = document.getElementById("qr-status") as HTMLElement;
-  const cameraSelect = document.getElementById("cameraSelect") as HTMLSelectElement;
+let arGroup: THREE.Group | null = null;
+let speckleRoot: THREE.Group | null = null;
+let sceneRef: THREE.Scene | null = null;
+let cameraRef: THREE.PerspectiveCamera | null = null;
+let isSpeckleLoaded = false;
 
-  let currentStream: MediaStream | null = null;
-  let currentCameraId: string | null = null;
-  let lastDetectedQR: QRCorner[] | null = null;
-  const detectionInterval = 100;
-  let lastDetectionTime = 0;
-  let qrCodeCorners: QRCorner[] = [];
-  const qrSize = 100;
-  const rectWidth = 280;
-  const rectHeight = 200;
-  let speckleViewer: SpeckleViewer | null = null;
+let currentlySelectedMesh: THREE.Mesh | null = null;
+let originalMaterial: THREE.Material | null = null;
 
-  const colour: ColourMap = {
-    Red: { name: "red", rgb: "rgb(190, 60, 40)", height: 16 },
-    Blue: { name: "blue", rgb: "rgb(50, 150, 180)", height: 28 },
-    Green: { name: "green", rgb: "rgb(100, 180, 70)", height: 4 },
-  };
+const colour: ColourMap = {
+  Red: { name: "red", rgb: "rgb(190, 60, 40)", height: 15, hex: 0 },
+  Blue: { name: "blue", rgb: "rgb(50, 150, 180)", height: 33, hex: 0 },
+  Green: { name: "green", rgb: "rgb(100, 180, 70)", height: 6, hex: 0 },
+};
 
-  if (typeof cv !== "undefined") {
-    cv["onRuntimeInitialized"] = () => {
-      console.log("OpenCV is ready");
-    };
-  } else {
-    console.error("OpenCV is not loaded");
-  }
+function rgbToHexStr(rgb: string) {
+  const match = rgb.match(/\d+/g);
+  if (!match) return "#000000";
+  const [r, g, b] = match.map(Number);
+  return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+}
 
-  async function getCameras() {
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const videoDevices = devices.filter((d) => d.kind === "videoinput");
-    cameraSelect.innerHTML = "";
-    videoDevices.forEach((d, i) => {
-      const opt = document.createElement("option");
-      opt.value = d.deviceId;
-      opt.text = d.label || `Camera ${i + 1}`;
-      cameraSelect.appendChild(opt);
+function updateSettings(colorKey: string) {
+  const hexInput = document.getElementById(`color${colorKey}`) as HTMLInputElement;
+  const heightInput = document.getElementById(`height${colorKey}`) as HTMLInputElement;
+  const heightLabel = document.getElementById(`label${colorKey}`) as HTMLElement;
+
+  const hexStr = hexInput.value.replace("#", "");
+  const r = parseInt(hexStr.substring(0, 2), 16);
+  const g = parseInt(hexStr.substring(2, 4), 16);
+  const b = parseInt(hexStr.substring(4, 6), 16);
+  const rgbcolour = `rgb(${r}, ${g}, ${b})`;
+
+  colour[colorKey as keyof ColourMap].rgb = rgbcolour;
+  colour[colorKey as keyof ColourMap].height = parseFloat(heightInput.value);
+
+  const values = rgbcolour.match(/\d+/g)!.map(Number);
+  colour[colorKey as keyof ColourMap].hex = (values[0] << 16) + (values[1] << 8) + values[2];
+
+  heightLabel.textContent = `Height: ${heightInput.value}`;
+
+  // Dynamically update the scale of existing extruded meshes
+  if (arGroup) {
+    const computedDepth = colour[colorKey as keyof ColourMap].height * 0.01;
+    arGroup.children.forEach(child => {
+      if (child.userData.colorName === colorKey) {
+        child.scale.z = computedDepth;
+      }
     });
-    if (videoDevices.length > 0) {
-      startWebcam(videoDevices[0].deviceId);
-    }
-    cameraSelect.addEventListener("change", switchCamera);
   }
+}
 
-  async function startWebcam(deviceId: string | null = null) {
-    if (currentStream) {
-      currentStream.getTracks().forEach((track) => track.stop());
-    }
-    const constraints: MediaStreamConstraints = {
-      video: {
-        deviceId: deviceId ? { exact: deviceId } : undefined,
-        facingMode: "environment",
-      },
-    };
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      video.srcObject = stream;
-      currentStream = stream;
-      currentCameraId = deviceId;
-      video.addEventListener("loadeddata", detectQR);
-    } catch (error) {
-      console.error("Error accessing camera:", error);
-      statusText.innerText = "Error accessing camera.";
-    }
-  }
-
-  function switchCamera() {
-    const selectedCamera = cameraSelect.value;
-    if (selectedCamera !== currentCameraId) {
-      startWebcam(selectedCamera);
-    }
-  }
-
-  function detectQR() {
-    const now = Date.now();
-    if (now - lastDetectionTime < detectionInterval) {
-      requestAnimationFrame(detectQR);
-      return;
-    }
-    lastDetectionTime = now;
-
-    if (video.videoWidth === 0 || video.videoHeight === 0) {
-      requestAnimationFrame(detectQR);
-      return;
-    }
-
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const qrCode = jsQR(imageData.data, imageData.width, imageData.height);
-
-    if (qrCode) {
-      lastDetectedQR = [
-        qrCode.location.topLeftCorner,
-        qrCode.location.topRightCorner,
-        qrCode.location.bottomRightCorner,
-        qrCode.location.bottomLeftCorner,
-      ];
-      statusText.innerText = "QR Code Detected: " + qrCode.data;
-      qrCodeCorners = lastDetectedQR;
-      drawPolygon(qrCodeCorners, "red");
-
-      const extendedCorners = extendQRCodeQuadrilateral(qrCodeCorners);
-      drawPolygon(extendedCorners, "blue");
-    } else {
-      statusText.innerText = "Detecting QR codes...";
-      lastDetectedQR = null;
-    }
-    requestAnimationFrame(detectQR);
-  }
-
-  function drawPolygon(points: QRCorner[], color = "red") {
-    if (!points || points.length === 0) return;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i++) {
-      ctx.lineTo(points[i].x, points[i].y);
-    }
-    ctx.closePath();
-    ctx.stroke();
-  }
-
-  function computeHomographyMatrix(src: number[][], dst: number[][]): number[][] {
-    const A: number[][] = [];
-    for (let i = 0; i < 4; i++) {
-      const [x, y] = src[i];
-      const [u, v] = dst[i];
-      A.push([-x, -y, -1, 0, 0, 0, x * u, y * u, u]);
-      A.push([0, 0, 0, -x, -y, -1, x * v, y * v, v]);
-    }
-
-    // Pad A with a row of zeros to make it a 9x9 matrix, as numeric.js SVD requires rows >= cols
-    if (A.length < A[0].length) {
-        A.push(new Array(A[0].length).fill(0));
-    }
-
-    const numericGlobal = (window as any).numeric;
-    if (numericGlobal && typeof numericGlobal.svd === "function") {
-      try {
-        const svd = numericGlobal.svd(A);
-        const V = svd.V;
-        const cols = V[0].length;
-        const rows = V.length;
-        const lastCol: number[] = [];
-        for (let r = 0; r < rows; r++) lastCol.push(V[r][cols - 1]);
-        return [
-          [lastCol[0], lastCol[1], lastCol[2]],
-          [lastCol[3], lastCol[4], lastCol[5]],
-          [lastCol[6], lastCol[7], lastCol[8]],
-        ];
-      } catch (e) {
-        console.error("Error during SVD computation:", e);
-        // fallback to identity matrix
-        return [
-          [1, 0, 0],
-          [0, 1, 0],
-          [0, 0, 1],
-        ];
-      }
-    }
-    // fallback to identity matrix
-    return [
-      [1, 0, 0],
-      [0, 1, 0],
-      [0, 0, 1],
-    ];
-  }
-
-  function transformPoint(H: number[][], pt: number[]): QRCorner {
-    const [x, y] = pt;
-    const w = H[2][0] * x + H[2][1] * y + H[2][2];
-    const nx = (H[0][0] * x + H[0][1] * y + H[0][2]) / w;
-    const ny = (H[1][0] * x + H[1][1] * y + H[1][2]) / w;
-    return { x: nx, y: ny };
-  }
-
-  function transformPoints(H: number[][], pts: number[][]): QRCorner[] {
-    return pts.map((p) => transformPoint(H, p));
-  }
-
-  function extendQRCodeQuadrilateral(corners: QRCorner[]): QRCorner[] {
-    const [topLeft, topRight, bottomRight, bottomLeft] = corners;
-
-    const srcPoints = [
-      [topLeft.x, topLeft.y],
-      [topRight.x, topRight.y],
-      [bottomRight.x, bottomRight.y],
-      [bottomLeft.x, bottomLeft.y],
-    ];
-
-    const dstPoints = [
-      [0, 0],
-      [qrSize, 0],
-      [qrSize, -qrSize],
-      [0, -qrSize],
-    ];
-
-    const extendedDstPoints = [
-      [0, 0],
-      [rectWidth, 0],
-      [rectWidth, -rectHeight],
-      [0, -rectHeight],
-    ];
-
-    const homographyMatrix = computeHomographyMatrix(dstPoints, srcPoints);
-    return transformPoints(homographyMatrix, extendedDstPoints);
-  }
-
-  function filterPixels(imageData: ImageData, targetColor: number[], tolerance = 50) {
-    const data = imageData.data;
-    const filteredPixels = new Uint8ClampedArray(data.length);
-    for (let i = 0; i < data.length; i += 4) {
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
-
-      const diffR = Math.abs(r - targetColor[0]);
-      const diffG = Math.abs(g - targetColor[1]);
-      const diffB = Math.abs(b - targetColor[2]);
-
-      if (diffR <= tolerance && diffG <= tolerance && diffB <= tolerance) {
-        filteredPixels[i] = r;
-        filteredPixels[i + 1] = g;
-        filteredPixels[i + 2] = b;
-        filteredPixels[i + 3] = data[i + 3];
-      } else {
-        filteredPixels[i] = 0;
-        filteredPixels[i + 1] = 0;
-        filteredPixels[i + 2] = 0;
-        filteredPixels[i + 3] = 0;
-      }
-    }
-    return filteredPixels;
-  }
-
-  function detectAndSimplifyBoundaries(imageData: ImageData) {
-    const mat = new cv.Mat(imageData.height, imageData.width, cv.CV_8UC4);
-    const data = imageData.data;
-
-    for (let i = 0; i < imageData.height; i++) {
-      for (let j = 0; j < imageData.width; j++) {
-        const index = (i * imageData.width + j) * 4;
-        mat.ucharPtr(i, j)[0] = data[index];
-        mat.ucharPtr(i, j)[1] = data[index + 1];
-        mat.ucharPtr(i, j)[2] = data[index + 2];
-        mat.ucharPtr(i, j)[3] = data[index + 3];
-      }
-    }
-
-    const gray = new cv.Mat();
-    const edges = new cv.Mat();
-    const contours = new cv.MatVector();
-    const hierarchy = new cv.Mat();
-
-    cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY, 0);
-    cv.Canny(gray, edges, 100, 200, 3);
-    cv.findContours(
-      edges,
-      contours,
-      hierarchy,
-      cv.RETR_EXTERNAL,
-      cv.CHAIN_APPROX_SIMPLE
-    );
-
-    const simplifiedContours = [];
-    for (let i = 0; i < contours.size(); i++) {
-      const contour = contours.get(i);
-      const epsilon = 0.02 * cv.arcLength(contour, true);
-      const simplifiedContour = new cv.Mat();
-      cv.approxPolyDP(contour, simplifiedContour, epsilon, true);
-      simplifiedContours.push(simplifiedContour);
-    }
-
-    mat.delete();
-    gray.delete();
-    edges.delete();
-    contours.delete();
-    hierarchy.delete();
-
-    return simplifiedContours;
-  }
-
-  function transformBoundaries(boundaries: any[], homographyMatrix: number[][]) {
-    const transformedBoundaries = [];
-    for (const boundary of boundaries) {
-      const points = [];
-      for (let i = 0; i < boundary.rows; i++) {
-        const point = boundary.data32S.slice(i * 2, i * 2 + 2);
-        const transformedPoint = transformPoint(homographyMatrix, point);
-        points.push(transformedPoint);
-      }
-      transformedBoundaries.push(points);
-    }
-    return transformedBoundaries;
-  }
-
-  function buildOBJ(boundaries: QRCorner[][], colourName: keyof ColourMap) {
-    const material = new THREE.MeshBasicMaterial({ color: colour[colourName].name });
-    const group = new THREE.Group();
-
-    for (const boundary of boundaries) {
-      const points = boundary.map(
-        (point) => new THREE.Vector3(point.x, point.y, 0)
-      );
-
-      const boundaryShape = new THREE.Shape(points);
-      const extrudeSettings = {
-        steps: 1,
-        depth: colour[colourName].height,
-        bevelEnabled: false,
-      };
-
-      const extrudedShape = new THREE.ExtrudeGeometry(
-        boundaryShape,
-        extrudeSettings
-      );
-      const mesh = new THREE.Mesh(extrudedShape, material);
-      group.add(mesh);
-    }
-
-    const exporter = new OBJExporter();
-    const objData = exporter.parse(group);
-
-    return { objData };
-  }
-
-  function overlayOBJOnSpeckle(objData: string, id: string, colourrgb: string) {
-    if (speckleViewer) {
-      const hexColor = parseInt(colourrgb.replace("rgb(", "").replace(")", "").split(',').map(c => parseInt(c).toString(16).padStart(2, '0')).join(""), 16);
-      speckleViewer.overlayObj(objData, id, hexColor);
-    } else {
-      console.warn("SpeckleViewer not initialized");
-    }
-  }
-
-  function detectAndProcessBoundaries(colourname: keyof ColourMap) {
-    if (!lastDetectedQR) {
-      statusText.innerText = "No QR detected";
-      return;
-    }
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-
-    const rgbArray = colour[colourname].rgb.match(/\d+/g)!.map(Number);
-    const redPixels = filterPixels(imageData, rgbArray);
-
-    const redImageData = new ImageData(redPixels, canvas.width, canvas.height);
-    const boundaries = detectAndSimplifyBoundaries(redImageData);
-
-    if (boundaries.length > 0) {
-      const [topLeft, topRight, bottomRight, bottomLeft] = lastDetectedQR;
-      const srcPoints = [
-        [topLeft.x, topLeft.y],
-        [topRight.x, topRight.y],
-        [bottomRight.x, bottomRight.y],
-        [bottomLeft.x, bottomLeft.y],
-      ];
-      const dstPoints = [
-        [0, 0],
-        [qrSize, 0],
-        [qrSize, -qrSize],
-        [0, -qrSize],
-      ];
-
-      const homographyMatrix = computeHomographyMatrix(srcPoints, dstPoints);
-      const transformedBoundaries = transformBoundaries(
-        boundaries,
-        homographyMatrix
-      );
-
-      const { objData } = buildOBJ(transformedBoundaries, colourname);
-      overlayOBJOnSpeckle(
-        objData,
-        "atelier-34-" + colour[colourname].name,
-        colour[colourname].rgb
-      );
-    }
-  }
-
-  function detectAndProcessAllBoundaries() {
-    detectAndProcessBoundaries("Red");
-    detectAndProcessBoundaries("Blue");
-    detectAndProcessBoundaries("Green");
-  }
-
-  function toggleSettings() {
+function initializeUI() {
+  document.getElementById("settings-btn")!.addEventListener("click", () => {
     const panel = document.getElementById("settingsPanel") as HTMLElement;
     panel.style.display = panel.style.display === "block" ? "none" : "block";
+  });
+
+  document.getElementById("capture")!.addEventListener("click", () => {
+    console.log("[DEBUG] Capture button clicked.");
+    const statusText = document.getElementById("qr-status");
+    if (statusText) statusText.innerText = "Processing image...";
+    (window as any).captureRequested = true;
+  });
+
+  for (const key in colour) {
+    (document.getElementById(`color${key}`) as HTMLInputElement).value = rgbToHexStr(colour[key as keyof ColourMap].rgb);
+    (document.getElementById(`height${key}`) as HTMLInputElement).value = colour[key as keyof ColourMap].height.toString();
+    document.getElementById(`label${key}`)!.textContent = `Height: ${colour[key as keyof ColourMap].height}`;
+    document.getElementById(`color${key}`)!.addEventListener("input", () => updateSettings(key));
+    document.getElementById(`height${key}`)!.addEventListener("input", () => updateSettings(key));
+  }
+}
+
+const NativeARPipelineModule = () => {
+  return {
+    name: 'speckle-native-ar',
+    onStart: (_args: any) => {
+      const { scene, camera } = XR8.Threejs.xrScene();
+      sceneRef = scene;
+      cameraRef = camera;
+
+      arGroup = new THREE.Group();
+      scene.add(arGroup);
+
+      const light1 = new THREE.DirectionalLight(0xffffff, 1.6);
+      light1.position.set(5, 10, 5);
+      scene.add(light1);
+
+      const light2 = new THREE.DirectionalLight(0xffffff, 1.2);
+      light2.position.set(-5, 8, -5);
+      scene.add(light2);
+
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+      scene.add(ambientLight);
+
+      arGroup.visible = false;
+      console.log("8th Wall AR Scene initialized.");
+
+      // Now that 8th Wall has successfully acquired the camera and unlocked permissions,
+      // it is safe to enumerate devices to populate the dropdown without freezing iOS Safari.
+      if (typeof (window as any)._getCameras === "function") {
+        (window as any)._getCameras();
+      }
+
+      const arCanvas = document.getElementById('arCanvas') as HTMLCanvasElement;
+      if (arCanvas) {
+        arCanvas.addEventListener('touchstart', (e: TouchEvent) => {
+          if (!cameraRef || !speckleRoot || !arGroup || !arGroup.visible) return;
+
+          const touch = e.touches[0];
+          // We must ignore touches on UI elements like buttons or the settings panel
+          if ((e.target as HTMLElement).tagName.toLowerCase() !== 'canvas') return;
+
+          const tapX = (touch.clientX / window.innerWidth) * 2 - 1;
+          const tapY = -(touch.clientY / window.innerHeight) * 2 + 1;
+
+          const raycaster = new THREE.Raycaster();
+          raycaster.setFromCamera(new THREE.Vector2(tapX, tapY), cameraRef);
+
+          const intersects = raycaster.intersectObject(speckleRoot, true);
+          if (intersects.length > 0) {
+            const intersectedObj = intersects[0].object as THREE.Mesh;
+            console.log(`[DEBUG-SELECTION] Mesh Selected: ${intersectedObj.name || 'Unnamed Mesh'}`);
+            console.log(`[DEBUG-SELECTION] Mesh Data:`, JSON.stringify(intersectedObj.userData, null, 2));
+
+            // Restore previous mesh material if any
+            if (currentlySelectedMesh && originalMaterial) {
+              currentlySelectedMesh.material = originalMaterial;
+            }
+
+            // Highlight new mesh
+            currentlySelectedMesh = intersectedObj;
+            originalMaterial = intersectedObj.material as THREE.Material;
+
+            const highlightMaterial = new THREE.MeshStandardMaterial({
+              color: 0x0000ff,
+              roughness: 0.5,
+              metalness: 0.1,
+              side: THREE.DoubleSide
+            });
+            intersectedObj.material = highlightMaterial;
+          }
+        }, { passive: true });
+      }
+    },
+
+    onEvent: (event: any) => {
+      if (event.name === 'reality.imagescanning') {
+        const statusText = document.getElementById("qr-status");
+        if (statusText) statusText.innerText = "Status: Searching for Image Target...";
+      } else if (event.name === 'reality.projectloaded') {
+        console.log("[XR8 EVENT] Image Target Project Loaded successfully.");
+      }
+    },
+
+    listeners: [
+      {
+        event: 'reality.imagefound',
+        process: ({ detail }: any) => {
+          console.log(`[DEBUG] Image Target Found: ${detail.name}`);
+          const statusText = document.getElementById("qr-status");
+          if (statusText) statusText.innerText = `Status: Found Target (${detail.name})!`;
+
+          if (detail.name === 'qrcode') {
+            if (arGroup) {
+              arGroup.position.copy(detail.position);
+              arGroup.quaternion.copy(detail.rotation);
+              arGroup.scale.set(detail.scale, detail.scale, detail.scale);
+              arGroup.visible = true;
+
+              if (isSpeckleLoaded && speckleRoot && !arGroup.children.includes(speckleRoot)) {
+                speckleRoot.scale.set(0.01, 0.01, 0.01);
+                speckleRoot.rotation.set(0, 0, 0);
+                speckleRoot.position.set(-0.5, 0.5, 0);
+                arGroup.add(speckleRoot);
+                console.log("[DEBUG] Speckle model attached to image target.");
+              }
+            }
+          }
+        }
+      },
+      {
+        event: 'reality.imageupdated',
+        process: ({ detail }: any) => {
+          if (detail.name === 'qrcode' && arGroup) {
+            arGroup.position.copy(detail.position);
+            arGroup.quaternion.copy(detail.rotation);
+            arGroup.scale.set(detail.scale, detail.scale, detail.scale);
+          }
+        }
+      },
+      {
+        event: 'reality.imagelost',
+        process: ({ detail }: any) => {
+          console.log(`[DEBUG] Image Target Lost: ${detail.name}`);
+          const statusText = document.getElementById("qr-status");
+          if (statusText) statusText.innerText = "Status: Target Lost (Anchored to SLAM)";
+        }
+      }
+    ],
+    onUpdate: () => {
+      if ((window as any).captureRequested && arGroup) {
+        console.log("[DEBUG-CAPTURE] onUpdate: Capture requested, hiding AR objects to capture background.");
+        (window as any)._arGroupWasVisible = arGroup.visible;
+        arGroup.visible = false;
+        (window as any)._doCaptureThisFrame = true;
+        (window as any).captureRequested = false;
+      }
+    },
+    onRender: () => {
+      if ((window as any)._doCaptureThisFrame) {
+        console.log("[DEBUG-CAPTURE] onRender: AR objects hidden, reading clean canvas frame...");
+        (window as any)._doCaptureThisFrame = false;
+
+        const canvas = document.getElementById('arCanvas') as HTMLCanvasElement;
+        const width = canvas.width;
+        const height = canvas.height;
+        console.log(`[DEBUG-CAPTURE] Canvas dimensions: ${width}x${height}`);
+
+        const offscreen = document.createElement("canvas");
+        offscreen.width = width;
+        offscreen.height = height;
+        const ctx = offscreen.getContext("2d");
+
+        if (ctx) {
+          ctx.drawImage(canvas, 0, 0, width, height);
+          const imageData = ctx.getImageData(0, 0, width, height);
+          console.log(`[DEBUG-CAPTURE] Captured clean image data, size: ${imageData.data.length} bytes.`);
+
+          setTimeout(() => {
+            console.log("[DEBUG-CAPTURE] Triggering processImageData asynchronously...");
+            processImageData(imageData, width, height);
+          }, 10);
+        } else {
+          console.error("[DEBUG-CAPTURE] Failed to get 2d context for offscreen canvas.");
+        }
+
+        if (arGroup) {
+          console.log("[DEBUG-CAPTURE] Restoring AR objects visibility.");
+          arGroup.visible = (window as any)._arGroupWasVisible;
+        }
+      }
+    }
+  }
+};
+
+function filterPixels(imageData: ImageData, targetColor: number[], tolerance = 50) {
+  const data = imageData.data;
+  const filteredPixels = new Uint8ClampedArray(data.length);
+  let matchCount = 0;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+
+    const diffR = Math.abs(r - targetColor[0]);
+    const diffG = Math.abs(g - targetColor[1]);
+    const diffB = Math.abs(b - targetColor[2]);
+
+    if (diffR <= tolerance && diffG <= tolerance && diffB <= tolerance) {
+      filteredPixels[i] = r;
+      filteredPixels[i + 1] = g;
+      filteredPixels[i + 2] = b;
+      filteredPixels[i + 3] = data[i + 3]; // Preserve original alpha
+      matchCount++;
+    } else {
+      filteredPixels[i] = 0;
+      filteredPixels[i + 1] = 0;
+      filteredPixels[i + 2] = 0;
+      filteredPixels[i + 3] = 0;
+    }
+  }
+  return { filteredPixels, matchCount };
+}
+
+function detectAndSimplifyBoundaries(imageData: ImageData) {
+  console.log("[DEBUG-CV] Starting OpenCV contour detection...");
+  // @ts-ignore
+  if (!cv || !cv.Mat) {
+    console.error("[DEBUG-CV] OpenCV not loaded");
+    return { boundaries: [], rawContours: 0, contoursLog: "OpenCV missing\n" };
   }
 
-  function updateSettings(colorKey: string) {
-    const colorInput = document.getElementById(`color${colorKey}`) as HTMLInputElement;
-    const heightInput = document.getElementById(`height${colorKey}`) as HTMLInputElement;
-    const heightLabel = document.getElementById(`label${colorKey}`) as HTMLElement;
+  // @ts-ignore
+  const mat = cv.matFromImageData(imageData);
 
-    const rgbcolour = hexToRgb(colorInput.value);
-    colour[colorKey as keyof ColourMap].rgb = rgbcolour;
-    colour[colorKey as keyof ColourMap].height = Number(heightInput.value);
+  // @ts-ignore
+  const gray = new cv.Mat();
+  // @ts-ignore
+  const edges = new cv.Mat();
+  // @ts-ignore
+  const contours = new cv.MatVector();
+  // @ts-ignore
+  const hierarchy = new cv.Mat();
 
-    heightLabel.textContent = `Height: ${heightInput.value}`;
+  const simplifiedContours: any[] = [];
+  let contoursLog = '';
+  let rawContoursCount = 0;
+  try {
+    // @ts-ignore
+    cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY, 0);
+    // @ts-ignore
+    cv.Canny(gray, edges, 100, 200, 3);
+    // @ts-ignore
+    cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+    rawContoursCount = contours.size();
+    for (let i = 0; i < contours.size(); i++) {
+      const contour = contours.get(i);
+      // @ts-ignore
+      const epsilon = 0.02 * cv.arcLength(contour, true);
+      // @ts-ignore
+      const simplifiedContour = new cv.Mat();
+      // @ts-ignore
+      cv.approxPolyDP(contour, simplifiedContour, epsilon, true);
+
+      const points = [];
+      for (let j = 0; j < simplifiedContour.rows; j++) {
+        const point = simplifiedContour.data32S.slice(j * 2, j * 2 + 2);
+        points.push({ x: point[0], y: point[1] });
+      }
+
+      contoursLog += `  - Contour ${i}: simplified to ${points.length} vertices\n`;
+      simplifiedContours.push(points);
+      simplifiedContour.delete();
+      contour.delete();
+    }
+  } catch (err: any) {
+    let msg = String(err);
+    if (typeof err === 'number') {
+      // @ts-ignore
+      msg = cv.exceptionFromPtr(err).msg;
+    }
+    contoursLog += `[DEBUG-CV] FATAL ERROR in OpenCV: ${msg}\n`;
+    console.error("[DEBUG-CV] OpenCV Exception:", msg);
   }
 
-  function getSpeckleCamera() {
-    if (speckleViewer) {
-      speckleViewer.getSpeckleCameraPosition();
+  mat.delete();
+  gray.delete();
+  edges.delete();
+  contours.delete();
+  hierarchy.delete();
+
+  return { boundaries: simplifiedContours, rawContours: rawContoursCount, contoursLog };
+}
+
+function raycastToARPlane(points2D: { x: number, y: number }[], canvasWidth: number, canvasHeight: number) {
+  if (!cameraRef || !arGroup) return { localPoints: [], firstRaycastLog: "Missing cameraRef or arGroup\n" };
+
+  const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(arGroup.quaternion).normalize();
+  const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, arGroup.position);
+
+  const raycaster = new THREE.Raycaster();
+  const localPoints: THREE.Vector3[] = [];
+  let missedCount = 0;
+
+  let firstRaycastLog = '';
+  for (let i = 0; i < points2D.length; i++) {
+    const p = points2D[i];
+    const ndcX = (p.x / canvasWidth) * 2 - 1;
+    const ndcY = -(p.y / canvasHeight) * 2 + 1;
+
+    raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), cameraRef);
+    const intersect = new THREE.Vector3();
+    const result = raycaster.ray.intersectPlane(plane, intersect);
+
+    if (result) {
+      const localPt = arGroup.worldToLocal(intersect.clone());
+      localPoints.push(localPt);
+      if (i === 0) firstRaycastLog = `  - First pt 2D(${p.x}, ${p.y}) -> 3D Local(${localPt.x.toFixed(3)}, ${localPt.y.toFixed(3)}, ${localPt.z.toFixed(3)})\n`;
+    } else {
+      missedCount++;
     }
   }
 
-  function initializeUI() {
-    document.getElementById("settings-btn")!.addEventListener("click", toggleSettings);
-    document.getElementById("capture")!.addEventListener("click", detectAndProcessAllBoundaries);
-    document.getElementById("get-camera-btn")!.addEventListener("click", getSpeckleCamera);
+  return { localPoints, firstRaycastLog };
+}
 
-    for (const key in colour) {
-      (document.getElementById(`color${key}`) as HTMLInputElement).value = rgbToHex(colour[key as keyof ColourMap].rgb);
-      (document.getElementById(`height${key}`) as HTMLInputElement).value = colour[key as keyof ColourMap].height.toString();
-      document.getElementById(`label${key}`)!.textContent = `Height: ${colour[key as keyof ColourMap].height}`;
-      document.getElementById(`color${key}`)!.addEventListener("input", () => updateSettings(key));
-      document.getElementById(`height${key}`)!.addEventListener("input", () => updateSettings(key));
+function buildExtrudedMesh(localPoints: THREE.Vector3[], colourName: string) {
+  if (localPoints.length < 3) {
+    console.warn(`[DEBUG-EXTRUDE] Not enough points to build a polygon (${localPoints.length}). Skipping.`);
+    return null;
+  }
+  console.log(`[DEBUG-EXTRUDE] Building 3D Extrusion for ${colourName} with ${localPoints.length} vertices...`);
+
+  const rgbStr = colour[colourName as keyof ColourMap].rgb;
+  const match = rgbStr.match(/\d+/g);
+  let hexColor = 0xffffff;
+  if (match && match.length >= 3) {
+    hexColor = (parseInt(match[0]) << 16) + (parseInt(match[1]) << 8) + parseInt(match[2]);
+  }
+
+  const material = new THREE.MeshStandardMaterial({
+    color: hexColor,
+    roughness: 0.6,
+    metalness: 0.1,
+    side: THREE.DoubleSide
+  });
+
+  const shape = new THREE.Shape();
+  shape.moveTo(localPoints[0].x, localPoints[0].y);
+  for (let i = 1; i < localPoints.length; i++) {
+    shape.lineTo(localPoints[i].x, localPoints[i].y);
+  }
+  shape.lineTo(localPoints[0].x, localPoints[0].y);
+
+  const extrudeSettings = {
+    steps: 1,
+    depth: 1, // Base depth is 1, we will scale it dynamically
+    bevelEnabled: false,
+  };
+
+  const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+  const mesh = new THREE.Mesh(geometry, material);
+
+  const depthScale = 0.01;
+  const computedDepth = colour[colourName as keyof ColourMap].height * depthScale;
+  mesh.scale.z = computedDepth;
+  mesh.userData.colorName = colourName;
+
+  mesh.position.z += 0.001;
+
+  console.log(`[DEBUG-EXTRUDE] Successfully built ExtrudedMesh for ${colourName}.`);
+  return mesh;
+}
+
+function processImageData(imageData: ImageData, width: number, height: number) {
+  const statusText = document.getElementById("qr-status");
+  if (statusText) statusText.innerText = "Analyzing CV filters...";
+
+  for (const colorKey of ["Red", "Green", "Blue"]) {
+    let logBuffer = `\n[DEBUG-MAIN] --- Processing Color Channel: ${colorKey} ---\n`;
+    const rgbArray = colour[colorKey as keyof ColourMap].rgb.match(/\d+/g)!.map(Number);
+    logBuffer += `Target RGB: ${rgbArray.join(",")} | Tolerance: 60\n`;
+
+    const { filteredPixels, matchCount } = filterPixels(imageData, rgbArray, 60);
+    logBuffer += `Found ${matchCount} matching pixels out of ${imageData.data.length / 4} total.\n`;
+
+    const filteredImageData = new ImageData(filteredPixels, width, height);
+    const { boundaries, rawContours, contoursLog } = detectAndSimplifyBoundaries(filteredImageData);
+
+    logBuffer += `Canny/FindContours: ${rawContours} raw contours.\n`;
+    logBuffer += contoursLog;
+    logBuffer += `Valid shapes after simplification: ${boundaries.length}\n`;
+
+    if (arGroup && boundaries.length > 0) {
+      let createdShapes = 0;
+      for (let idx = 0; idx < boundaries.length; idx++) {
+        const boundary = boundaries[idx];
+        logBuffer += `Shape #${idx + 1}/${boundaries.length} (${boundary.length} verts) Raycast:\n`;
+        const { localPoints, firstRaycastLog } = raycastToARPlane(boundary, width, height);
+        logBuffer += firstRaycastLog;
+
+        if (localPoints.length >= 3) {
+          const mesh = buildExtrudedMesh(localPoints, colorKey);
+          if (mesh) {
+            arGroup.add(mesh);
+            createdShapes++;
+            logBuffer += `  -> Successfully generated & attached 3D mesh.\n`;
+          }
+        } else {
+          logBuffer += `  -> Failed: only ${localPoints.length} valid 3D points recovered.\n`;
+        }
+      }
+      logBuffer += `Finished processing ${colorKey}: ${createdShapes} final meshes attached.\n`;
+    } else {
+      logBuffer += `Skipping extrusion for ${colorKey}: No viable shapes detected.\n`;
     }
+
+    console.log(logBuffer);
   }
 
-  function hexToRgb(hex: string) {
-    hex = hex.replace(/^#/, "");
-    const bigint = parseInt(hex, 16);
-    const r = (bigint >> 16) & 255;
-    const g = (bigint >> 8) & 255;
-    const b = bigint & 255;
-    return `rgb(${r}, ${g}, ${b})`;
+  if (statusText) statusText.innerText = "Overlay complete!";
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  console.log("=== APP STARTING ===");
+  console.log("Fetching dynamic settings...");
+
+  let speckleUrl = "https://app.speckle.systems/projects/6293f7974f/models/3e77e04b05";
+  try {
+    const res = await fetch("/resource/specklelink.txt");
+    if (res.ok) {
+      speckleUrl = (await res.text()).trim();
+      console.log(`Loaded Speckle URL: ${speckleUrl}`);
+    }
+  } catch (e) {
+    console.error("Could not load specklelink.txt, using fallback.");
   }
 
-  function rgbToHex(rgb: string) {
-    const values = rgb.match(/\d+/g)!.map(Number);
-    return `#${values.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+  let imageTargetData: any = null;
+  try {
+    const res = await fetch("/resource/qrcode-target.json");
+    if (res.ok) {
+      imageTargetData = await res.json();
+      if (imageTargetData.imagePath) {
+        imageTargetData.imagePath = "/resource/" + imageTargetData.imagePath.split('/').pop();
+      }
+      if (imageTargetData.resources) {
+        for (const key in imageTargetData.resources) {
+          imageTargetData.resources[key] = "/resource/" + imageTargetData.resources[key].split('/').pop();
+        }
+      }
+      console.log("Loaded qrcode-target.json successfully.");
+    } else {
+      console.warn("Failed to load qrcode-target.json (HTTP " + res.status + ")");
+    }
+  } catch (e) {
+    console.error("Could not load qrcode-target.json", e);
   }
 
-  async function initApp() {
-    console.log("Initialising app...");
-    const container = document.getElementById("speckle-model");
-    if (container) {
-      console.log("Speckle container found. Initialising viewer...");
-      speckleViewer = new SpeckleViewer(container);
-      try {
-        await speckleViewer.init("https://app.speckle.systems/projects/6293f7974f/models/3e77e04b05");
-        console.log("Speckle viewer initialised and model loaded.");
-      } catch (error) {
-        console.error("Error initialising Speckle viewer:", error);
+  console.log("Initialising Speckle...");
+  const viewer = await initSpeckle(speckleUrl);
+  if (viewer) {
+    isSpeckleLoaded = true;
+    // Extract the internal THREE.Scene from Speckle's renderer to use in our AR scene
+    speckleRoot = viewer.getRenderer().scene as unknown as THREE.Group;
+    console.log("Speckle model loaded and extracted.");
+  } else {
+    console.error("Failed to initialize Speckle viewer.");
+  }
+
+  const cleanSpeckleGroup = new THREE.Group();
+
+  function convertSpeckleToStandardThreeJS(node: THREE.Object3D) {
+    if ((node as THREE.Mesh).isMesh) {
+      const mesh = node as THREE.Mesh;
+
+      // Filter out Speckle Viewer's internal grid and shadow catcher
+      if (mesh.name.toLowerCase().includes('grid') || mesh.type === 'GridHelper' || mesh.type === 'LineSegments' || mesh.name.toLowerCase().includes('shadowcatcher')) {
+        return;
+      }
+      if (mesh.material && (mesh.material as any).type === 'ShadowMaterial') {
+        return;
+      }
+
+      if (mesh.geometry) {
+        const geometry = mesh.geometry.clone();
+        const originalMaterial: any = mesh.material;
+        const color = originalMaterial && originalMaterial.color ? originalMaterial.color : new THREE.Color(0xffffff);
+        const standardMaterial = new THREE.MeshStandardMaterial({
+          color: color,
+          roughness: 0.5,
+          metalness: 0.1,
+          side: THREE.DoubleSide,
+        });
+        const newMesh = new THREE.Mesh(geometry, standardMaterial);
+        newMesh.position.copy(mesh.position);
+        newMesh.rotation.copy(mesh.rotation);
+        newMesh.scale.copy(mesh.scale);
+        newMesh.name = mesh.name;
+        // Speckle Viewer often puts node ID or raw data inside userData
+        newMesh.userData = mesh.userData || {};
+        newMesh.updateMatrixWorld(true);
+        cleanSpeckleGroup.add(newMesh);
       }
     } else {
-      console.error("Container for speckle model not found");
+      const children = [...node.children];
+      for (const child of children) {
+        convertSpeckleToStandardThreeJS(child);
+      }
     }
-    await getCameras();
-    initializeUI();
   }
 
-  initApp();
+  if (speckleRoot) {
+    const childrenToConvert = [...speckleRoot.children];
+    for (const child of childrenToConvert) {
+      convertSpeckleToStandardThreeJS(child);
+    }
+    cleanSpeckleGroup.updateMatrixWorld(true);
+    speckleRoot = cleanSpeckleGroup;
+  }
+
+  initializeUI();
+
+  let currentDeviceId: string | null = null;
+
+  async function getCameras() {
+    console.log("[DEBUG] Fetching available cameras via enumerateDevices...");
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+        console.error("[DEBUG] navigator.mediaDevices.enumerateDevices is NOT supported on this browser!");
+        return;
+      }
+
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      console.log(`[DEBUG] Found ${devices.length} total media devices.`);
+      const videoDevices = devices.filter((d) => d.kind === "videoinput");
+      console.log(`[DEBUG] Found ${videoDevices.length} video input devices.`);
+
+      const cameraSelect = document.getElementById("cameraSelect") as HTMLSelectElement;
+      if (cameraSelect) {
+        cameraSelect.innerHTML = "";
+        videoDevices.forEach((d, i) => {
+          const opt = document.createElement("option");
+          opt.value = d.deviceId;
+          opt.text = d.label || `Camera ${i + 1}`;
+          console.log(`[DEBUG] Adding camera to dropdown: ${opt.text} [ID: ${opt.value.substring(0, 8)}...]`);
+          cameraSelect.appendChild(opt);
+        });
+
+        if (currentDeviceId) {
+          cameraSelect.value = currentDeviceId;
+        }
+
+        // Only add listener if not already added, or just replace it
+        const newSelect = cameraSelect.cloneNode(true) as HTMLSelectElement;
+        cameraSelect.parentNode?.replaceChild(newSelect, cameraSelect);
+
+        newSelect.addEventListener("change", () => {
+          const selectedCamera = newSelect.value;
+          console.log(`[DEBUG] Dropdown changed. User selected camera: ${selectedCamera}`);
+          if (selectedCamera !== currentDeviceId) {
+            currentDeviceId = selectedCamera;
+            if (XR8.XrController && XR8.XrController.updateCamera) {
+              console.log("[DEBUG] Updating XR8 camera dynamically via XrController...");
+              XR8.XrController.updateCamera({ deviceId: selectedCamera });
+            } else {
+              console.log("[DEBUG] updateCamera not available. Restarting XR8 engine...");
+              XR8.stop();
+              XR8.clearCameraPipelineModules();
+              startXR();
+            }
+          }
+        });
+      }
+    } catch (e) {
+      console.error("[DEBUG] Critical error during enumerateDevices:", e);
+    }
+  }
+
+  (window as any)._getCameras = getCameras;
+
+  const startXR = () => {
+    if (imageTargetData) {
+      imageTargetData.name = "qrcode";
+      console.log("Configuring XR8 with imageTargetData:", JSON.stringify(imageTargetData, null, 2));
+      XR8.XrController.configure({ imageTargetData: [imageTargetData] });
+    }
+
+    XR8.addCameraPipelineModules([
+      XRExtras.Loading.pipelineModule(),
+      XRExtras.RuntimeError.pipelineModule(),
+      XRExtras.FullWindowCanvas.pipelineModule(),
+      XR8.GlTextureRenderer.pipelineModule(),
+      XR8.Threejs.pipelineModule(),
+      XR8.XrController.pipelineModule(), // Enables SLAM tracking
+      NativeARPipelineModule(),
+    ]);
+
+    const config: any = { canvas: document.getElementById('arCanvas') };
+    if (currentDeviceId) {
+      config.cameraConfig = { deviceId: currentDeviceId };
+    }
+
+    XR8.run(config);
+  };
+
+  const onxrloaded = () => {
+    (window as any).THREE = THREE;
+    startXR();
+  };
+
+  if ((window as any).XR8) {
+    onxrloaded();
+  } else {
+    window.addEventListener('xrloaded', onxrloaded);
+  }
 });

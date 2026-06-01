@@ -1,0 +1,23 @@
+{
+  "imagePath": "image-targets/qrcode_luminance.png",
+  "metadata": null,
+  "name": "qrcode",
+  "type": "PLANAR",
+  "properties": {
+    "left": 128,
+    "top": 0,
+    "width": 767,
+    "height": 1023,
+    "isRotated": true,
+    "originalWidth": 1023,
+    "originalHeight": 1023
+  },
+  "resources": {
+    "originalImage": "qrcode_original.png",
+    "croppedImage": "qrcode_cropped.png",
+    "thumbnailImage": "qrcode_thumbnail.png",
+    "luminanceImage": "qrcode_luminance.png"
+  },
+  "created": 1780297212480,
+  "updated": 1780297212480
+}

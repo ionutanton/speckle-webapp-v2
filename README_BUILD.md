@@ -1,47 +1,45 @@
-# Build & Run (minimal)
+# Speckle WebAR Application
 
-This project now includes a minimal TypeScript build configuration that compiles `src/*.ts` into `dist/`.
+This project is an interactive WebAR application that integrates **8th Wall** for SLAM-based augmented reality, **Speckle** for 3D model loading, and **OpenCV** for real-time computer vision and 2D contour extrusion.
 
-Prerequisites
-- Node.js (16+ recommended)
-````markdown
-# Build & Run (minimal)
+## Prerequisites
+- **Node.js** (v18+ recommended)
+- **npm** (comes with Node.js)
 
-This project includes a minimal TypeScript build configuration and also supports using `src/app.ts` as the development entry (served by Vite).
-
-Prerequisites
-- Node.js (16+ recommended)
-- npm
-
-Install dependencies:
-
+## Setup
+First, install the project dependencies:
 ```powershell
 npm install
 ```
 
-Build TypeScript (standalone compile):
+## Running the Application (Development)
+The project uses **Vite** as its build tool and development server. It also includes a custom Express middleware configured inside `vite.config.js` to capture logs from your mobile device and save them to your PC.
 
-```powershell
-npm run tsc:build
-```
-
-Serve the project (simple static server):
-
-```powershell
-npm run serve
-```
-
-Development with TypeScript as the main script
-
-The project is configured so you can use `src/app.ts` as the entry during development. Vite will compile TypeScript on-the-fly and serve it as ES modules. `index.html` references `./src/app.ts`.
-
+To start the development server, run:
 ```powershell
 npm run dev
 ```
+Alternatively, you can run the provided batch script: `start_dev.bat`
 
-Then open the URL Vite prints (usually http://localhost:5173) in your browser.
+Once running, Vite will provide a local and a network URL. To test the AR capabilities on your mobile device, you must expose the local server via a secure HTTPS tunnel (e.g., using **ngrok**).
 
-Notes
-- The `tsc` output goes to `dist/` (used for a simple static serve). If you prefer to build a production bundle with Vite, use `npm run build`.
-- If TypeScript reports missing globals (e.g. `jsQR`, `cv`, `THREE`), ensure the corresponding <script> tags are present in `index.html` (they are by default).
-````
+## Custom Logging
+When running the app on a mobile device, viewing the browser console is difficult. To solve this, the app automatically intercepts `console.log`, `console.warn`, and `console.error` on the phone, batches them, and posts them to the Vite server via a `/log` endpoint. 
+
+These logs are written in real-time to a file called `client-debug.log` in the root of the project. You can monitor this file on your PC to trace the application state (e.g., OpenCV processing steps, raycasting results).
+
+## Building for Production
+To compile the TypeScript and bundle the application into static assets for production deployment, run:
+```powershell
+npm run build
+```
+Alternatively, run the provided batch script: `start_build.bat`
+
+The output will be placed in the `dist/` folder, which can then be deployed to any static hosting provider.
+
+## Key Technologies
+- **Vite:** High-performance local development server and build bundler.
+- **8th Wall:** Commercial WebAR engine providing markerless tracking (SLAM) and Image Targets.
+- **Three.js:** Renders the 3D scene, handles raycasting, and builds extruded meshes.
+- **Speckle (Viewer API):** Loads architectural 3D models into the scene.
+- **OpenCV.js:** Processes camera frames using Canny edge detection and contour mapping to discover flat geometries to extrude.
