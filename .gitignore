@@ -5,3 +5,7 @@ docker.bat
 dockerfile
 /dist
 client-debug.log
+*.tar
+
+# Documentation
+readme_docker.md

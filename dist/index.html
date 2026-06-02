@@ -11,7 +11,7 @@
     <!-- 8th Wall Engine (Open Source SLAM binary) served from local public folder -->
     <script src="/8thwall/engine-binary/xr.js" async crossorigin="anonymous" data-preload-chunks="slam"></script>
     <script src="/8thwall/xrextras/xrextras.js" crossorigin="anonymous"></script>
-    <script src="https://docs.opencv.org/4.10.0/opencv.js" type="text/javascript"></script>
+    <script src="https://docs.opencv.org/4.10.0/opencv.js" type="text/javascript" async></script>
     
     <!-- Eruda Mobile Console -->
     <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
@@ -25,7 +25,6 @@
       });
     </script>
     
-    <!-- Forward console to PC server -->
     <script>
       (function() {
         const originalLog = console.log;
@@ -36,9 +35,12 @@
         let logTimeout = null;
         
         function sendLog(level, args) {
-          const message = Array.from(args).map(arg => 
-            typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
-          ).join(' ');
+          const message = Array.from(args).map(arg => {
+            if (arg instanceof Event) {
+              return `Event: type=${arg.type}, target=${arg.target ? (arg.target.tagName || arg.target.nodeName) : 'unknown'}`;
+            }
+            return typeof arg === 'object' ? JSON.stringify(arg) : String(arg);
+          }).join(' ');
           
           logBuffer.push(`[${level.toUpperCase()}] ${message}`);
           
@@ -47,10 +49,12 @@
               const body = logBuffer.join('\n');
               logBuffer = [];
               logTimeout = null;
-              fetch('/log', {
-                method: 'POST',
-                body: body
-              }).catch(() => {});
+              if (!window.__isProd) {
+                fetch('/log', {
+                  method: 'POST',
+                  body: body
+                }).catch(() => {});
+              }
             }, 500);
           }
         }
@@ -67,6 +71,20 @@
           originalWarn.apply(console, args);
           sendLog('warn', args);
         };
+
+        window.addEventListener('error', function(e) {
+          if (e.target && (e.target.src || e.target.href)) {
+            sendLog('error', [`Resource failed to load: ${e.target.tagName} at ${e.target.src || e.target.href}`]);
+          } else if (e.error) {
+            sendLog('error', [e.error.message, e.error.stack]);
+          } else {
+            sendLog('error', [e.message || 'Unknown Error Event']);
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function(e) {
+          sendLog('error', [e.reason ? (e.reason.message || e.reason) : 'Unhandled Promise Rejection']);
+        });
       })();
     </script>
 
@@ -150,7 +168,7 @@
         width: 100%;
       }
     </style>
-    <script type="module" crossorigin src="/assets/index-tLFajiOn.js"></script>
+    <script type="module" crossorigin src="/assets/index-B-Vy5SrN.js"></script>
   </head>
   <body>
     <!-- Hidden speckle container for headless loading -->
@@ -168,6 +186,53 @@
     
     <div class="settings-panel" id="settingsPanel">
       <h4>Settings</h4>
+      
+      <div style="margin-bottom: 15px; border-bottom: 1px solid #555; padding-bottom: 10px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+          <label for="globalScaleRange">Global Scale:</label>
+          <input type="number" id="globalScaleInput" value="0.01" step="0.01" style="width: 60px;" />
+        </div>
+        <input
+          type="range"
+          id="globalScaleRange"
+          class="slider"
+          min="0"
+          max="6"
+          step="1"
+          value="0"
+        />
+      </div>
+
+      <div style="margin-bottom: 15px; border-bottom: 1px solid #555; padding-bottom: 10px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+          <label for="timeOfDayRange">Time of Day (Hour):</label>
+          <span id="timeOfDayLabel">12:00</span>
+        </div>
+        <input
+          type="range"
+          id="timeOfDayRange"
+          class="slider"
+          min="0"
+          max="24"
+          step="0.5"
+          value="12"
+        />
+
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; margin-top: 10px;">
+          <label for="monthOfYearRange">Month of Year:</label>
+          <span id="monthOfYearLabel">March</span>
+        </div>
+        <input
+          type="range"
+          id="monthOfYearRange"
+          class="slider"
+          min="1"
+          max="12"
+          step="1"
+          value="3"
+        />
+      </div>
+
       <div class="color-block">
         <input type="color" id="colorRed" />
         <label id="labelRed">Height: 150</label>

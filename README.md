@@ -20,8 +20,23 @@ You can use physical colored pieces of paper (or drawings on a physical whiteboa
 ## Features
 - **Hybrid AR Tracking**: Uses Image Tracking to perfectly lock the 3D Speckle models onto the `qrcode.png` reference image, and then utilizes SLAM tracking to allow you to walk freely around the model without losing the physical anchor.
 - **Dynamic 3D Extrusion**: Transform physical colored paper into interactive 3D massing blocks in real-time.
-- **Live Settings UI**: Adjust the extrusion height of the Red, Green, and Blue meshes on the fly via live sliders. The AR meshes instantly scale up or down as you slide.
+- **Speckle Cinematic Aesthetics**: Replicates the official Speckle Viewer's `ACESFilmicToneMapping` and `VSMShadowMap` for beautiful, soft shadows and realistic lighting.
+- **Real-World Solar Lighting**: The app calculates precise astronomical solar positioning (Azimuth and Elevation) based on the time of day and year, casting accurate shadows across the Speckle model and captured volumes.
+- **Live Settings UI**: Adjust the extrusion height of the Red, Green, and Blue meshes on the fly via live sliders. You can also dynamically change the **Time of Day** and **Month of Year** to manipulate the sun's position.
 - **Remote PC Logging**: Custom network logging intercepts your mobile device's console and streams it directly to your PC for seamless debugging.
+
+## Interactive Gestures
+You can manipulate the generated 3D meshes (captured from colored paper) directly on your phone screen:
+- **Single Tap**: Select a captured mesh. It will highlight with a white contour and darken slightly. Tapping empty space deselects it.
+- **One-Finger Vertical Drag**: When a mesh is selected, drag up or down with one finger to dynamically extrude or shrink its height in real-time.
+- **Two-Finger Pan & Rotate**: When a mesh is selected, use two fingers to translate (move) or rotate the mesh around its center on the ground plane.
+- **Double Tap**: Resets the AR scene, clears all captured meshes, and recenters the 8th Wall SLAM tracking.
+
+## Lighting & Shadow Controls
+1. Tap the **⚙ Settings** button to open the settings overlay.
+2. Under the **Time of Day (Hour)** slider, drag to change the time from 00:00 (Midnight) to 24:00. Watch the shadows lengthen and shorten!
+3. Under the **Month of Year** slider, drag to change the season (Jan - Dec). The solar declination will shift, accurately modifying the sun's angle.
+4. The system defaults to the Spring Equinox (March) at 12:00 PM at an assumed latitude of 45°N.
 
 ## Setup & Image Target Configuration
 To use the `qrcode.png` as an 8th Wall Image Target, it must be compiled into 8th Wall's proprietary tracking format. 

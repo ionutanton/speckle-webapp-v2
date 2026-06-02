@@ -1,0 +1,8 @@
+node_modules
+.git
+.vscode
+dist
+client-debug.log
+src_back
+*.bat
+README*
